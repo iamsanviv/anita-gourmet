@@ -234,3 +234,20 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .tog.on { background: var(--green); }
 .tog.on::after { left: 21px; }
 @media (prefers-reduced-motion: reduce) { .cat .bub, .tog::after { transition: none; } }
+
+/* inicio de sesión (estilo "Delantal rosa") */
+.auth { max-width: 560px; margin: 0 auto; min-height: 100dvh; display: flex; flex-direction: column; }
+.auth-hero { position: relative; background: var(--pink); color: var(--on-pink); min-height: 300px; border-radius: 0 0 44px 44px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: calc(24px + env(safe-area-inset-top, 0px)) 16px 56px; overflow: hidden; }
+.auth-deco { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .18; color: #fff; }
+.auth-logo { position: relative; width: 156px; height: 156px; border-radius: 50%; background: #fff; display: grid; place-items: center; box-shadow: 0 10px 30px rgba(120, 10, 60, .25); }
+.auth-logo img { width: 128px; height: auto; }
+.auth-hero p { position: relative; margin: 0; font-family: var(--display); font-weight: 600; font-size: 19px; color: #fff; }
+.auth-card { position: relative; margin: -40px 16px 0; background: var(--surface); border-radius: 24px; padding: 24px 6px 14px; box-shadow: 0 12px 32px rgba(120, 10, 60, .12); }
+.auth-card h1 { font-family: var(--display); font-weight: 600; font-size: 23px; margin: 0 16px 16px; }
+.auth-card form { display: flex; flex-direction: column; }
+.auth-card .field input { background: var(--bg); padding: 13px 14px; font-size: 16px; }
+.auth-card .btn { margin: 8px 16px 0; padding: 15px 16px; font-family: var(--display); font-weight: 600; font-size: 17px; }
+.auth-ayuda { margin: -6px 16px 14px; color: var(--muted); font-size: 14px; }
+.auth-link { display: block; margin: 8px auto 0; min-height: 44px; padding: 0 12px; border: 0; background: none; color: var(--pink); font-weight: 800; font-size: 14px; }
+.auth-pie { margin: auto 0 0; padding: 24px 16px calc(18px + env(safe-area-inset-bottom, 0px)); text-align: center; font-size: 12px; font-weight: 600; color: var(--muted); }
+@media (prefers-color-scheme: dark) { .auth-hero { background: #b8226a; } }
