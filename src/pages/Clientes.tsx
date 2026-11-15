@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { fechaCorta, iniciales, pesos } from '../lib/format'
+import { fechaCorta, iniciales, nombreMes, pesos } from '../lib/format'
 import type { Cliente } from '../lib/types'
 import NuevoCliente from './NuevoCliente'
+import { corteActual, resumenesPendientes } from './Resumenes'
 
 type Fila = Cliente & { balance: number; last_movement: string | null }
 type Filtro = 'todos' | 'saldo' | 'aldia' | 'bloqueados'
@@ -14,6 +15,9 @@ export default function Clientes() {
   const [q, setQ] = useState('')
   const [filtro, setFiltro] = useState<Filtro>('todos')
   const [creando, setCreando] = useState(false)
+  const [pendientes, setPendientes] = useState(0)
+
+  useEffect(() => { resumenesPendientes().then(setPendientes).catch(() => {}) }, [])
 
   useEffect(() => {
     ;(async () => {
@@ -47,6 +51,11 @@ export default function Clientes() {
         <b>{pesos(porCobrar)}</b>
         <span>{conSaldo} {conSaldo === 1 ? 'cliente' : 'clientes'} con saldo</span>
       </div>
+      <button className={'alert' + (pendientes ? '' : ' info')} onClick={() => nav('/clientes/resumenes')}>
+        💬 {pendientes
+          ? `Resúmenes de ${nombreMes(corteActual().anterior).split(' ')[0]}: ${pendientes} por enviar ›`
+          : `Resúmenes del mes (corte el 1) ›`}
+      </button>
       <label className="search" style={{ marginTop: 12 }}>
         <span aria-hidden="true">🔍</span>
         <input id="buscar-clientes" placeholder="Nombre o cédula" value={q} onChange={(e) => setQ(e.target.value)} />

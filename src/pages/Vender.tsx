@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useCarrito, useCatalogo } from '../lib/store'
+import { useCarrito, useCatalogo, useToast } from '../lib/store'
+import { useMenuHoy } from './MenuDia'
 import { colorCategoria } from '../lib/config'
-import { pesos } from '../lib/format'
+import { cant, pesos } from '../lib/format'
 import type { OpcionElegida, Producto } from '../lib/types'
 
 export default function Vender() {
@@ -12,6 +13,8 @@ export default function Vender() {
   const [catId, setCatId] = useState<string | null>(null)
   const [busqueda, setBusqueda] = useState('')
   const [abierto, setAbierto] = useState<Producto | null>(null)
+  const toast = useToast()
+  const menu = useMenuHoy()
 
   const cat = categorias.find((c) => c.id === catId) ?? categorias[0]
   const color = (categoryId: string) => colorCategoria(categorias.find((c) => c.id === categoryId)?.sort ?? 0)
@@ -26,7 +29,14 @@ export default function Vender() {
 
   function tocar(p: Producto) {
     if (p.option_groups.length) return setAbierto(p)
+    avisarStock(p, 1)
     carrito.agregar({ product_id: p.id, name: p.name, icon: p.icon, unit_price: p.price, quantity: 1, options: [], note: '' })
+  }
+
+  /** Solo avisa: la venta nunca se bloquea por inventario. */
+  function avisarStock(p: Producto, n: number) {
+    const faltan = faltantes(p, enCarrito(p.id) + n, carrito.items, productos)
+    if (faltan.length) toast(`Ojo: ${faltan.join(', ')}. Puedes vender igual.`, true)
   }
 
   const hoy = new Date().toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'short' })
@@ -44,6 +54,13 @@ export default function Vender() {
         <span aria-hidden="true">🔍</span>
         <input id="buscar" placeholder="Buscar producto…" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
       </label>
+
+      {menu && !busqueda && (
+        <div className="menu-dia">
+          <span className="em">🍛</span>
+          <div><small>MENÚ DEL DÍA</small><b>{menu.title}</b>{menu.description && <p>{menu.description}</p>}</div>
+        </div>
+      )}
 
       {!busqueda && (
         <div className="cats" role="tablist">
@@ -70,11 +87,13 @@ export default function Vender() {
           {lista.map((p) => {
             const n = enCarrito(p.id)
             const off = !p.available_today
+            const sinStock = p.recipes.some((r) => r.inventory_items && r.inventory_items.stock < r.quantity)
             return (
               <div key={p.id} className={'card' + (off ? ' off' : '')}>
                 <div className="art" style={{ ['--c' as string]: color(p.category_id) }}>{p.icon}</div>
                 {p.option_groups.length > 0 && <span className="tag opc">Con opciones</span>}
                 {off && <span className="tag ago">Agotado hoy</span>}
+                {!off && sinStock && <span className="tag low">Poco inventario</span>}
                 <div className="nm">{p.name}</div>
                 <div className="row">
                   <span className="pr">{p.option_groups.length ? 'desde ' : ''}{pesos(p.price)}</span>
@@ -98,12 +117,28 @@ export default function Vender() {
         </button>
       )}
 
-      {abierto && <OpcionesSheet producto={abierto} onClose={() => setAbierto(null)} />}
+      {abierto && <OpcionesSheet producto={abierto} onClose={() => setAbierto(null)} onAgregar={(n) => avisarStock(abierto, n)} />}
     </div>
   )
 }
 
-function OpcionesSheet({ producto, onClose }: { producto: Producto; onClose: () => void }) {
+/** Ingredientes que no alcanzan si se venden `unidades` de este producto (contando lo que ya va en el pedido). */
+function faltantes(p: Producto, unidades: number, items: { product_id: string | null; quantity: number }[], productos: Producto[]) {
+  return p.recipes.flatMap((r) => {
+    const inv = r.inventory_items
+    if (!inv) return []
+    // Lo que otros productos del pedido ya gastan de este mismo ingrediente
+    const otros = items.reduce((a, i) => {
+      if (i.product_id === p.id || !i.product_id) return a
+      const rec = productos.find((x) => x.id === i.product_id)?.recipes.find((x) => x.inventory_items?.id === inv.id)
+      return a + (rec ? rec.quantity * i.quantity : 0)
+    }, 0)
+    const queda = inv.stock - otros
+    return queda < r.quantity * unidades ? [`quedan ${cant(Math.max(0, queda))} ${inv.unit} de ${inv.name}`] : []
+  })
+}
+
+function OpcionesSheet({ producto, onClose, onAgregar }: { producto: Producto; onClose: () => void; onAgregar: (n: number) => void }) {
   const carrito = useCarrito()
   const [sel, setSel] = useState<Record<string, string[]>>(() =>
     Object.fromEntries(producto.option_groups.map((g) => [g.id, g.required && !g.multiple && g.options[0] ? [g.options[0].id] : []])),
@@ -127,6 +162,7 @@ function OpcionesSheet({ producto, onClose }: { producto: Producto; onClose: () 
   }
 
   function agregar() {
+    onAgregar(cant)
     carrito.agregar({ product_id: producto.id, name: producto.name, icon: producto.icon, unit_price: unit, quantity: cant, options: elegidas, note: nota.trim() })
     onClose()
   }
