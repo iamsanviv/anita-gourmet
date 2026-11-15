@@ -1,46 +1,43 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth, useCatalogo, useToast } from '../lib/store'
 import { pesos } from '../lib/format'
 import type { Personal, Producto } from '../lib/types'
 import { CrearClave } from './Login'
 
-type Vista = null | 'productos' | 'empleados' | 'clave'
+type Vista = null | 'empleados' | 'clave'
 
 export default function Mas() {
   const { staff } = useAuth()
+  const nav = useNavigate()
   const [vista, setVista] = useState<Vista>(null)
 
   if (vista === 'clave') return <CrearClave onDone={() => setVista(null)} />
-  if (vista === 'productos') return <Productos volver={() => setVista(null)} />
   if (vista === 'empleados') return <Empleados volver={() => setVista(null)} />
 
-  const items: [string, string, string, Vista | 'salir' | 'pronto'][] = [
-    ['🏷️', 'Productos y precios', 'Disponibilidad de hoy y precios', 'productos'],
-    ...(staff?.role === 'admin' ? [['👩‍🍳', 'Empleados', 'Usuarios con acceso a la app', 'empleados'] as [string, string, string, Vista]] : []),
-    ['🔒', 'Cambiar contraseña', staff?.full_name ?? '', 'clave'],
-    ['🍛', 'Menú del día', 'Fase 2', 'pronto'],
-    ['📊', 'Reportes y cierre de caja', 'Fase 2', 'pronto'],
-    ['🚚', 'Proveedores y compras', 'Fase 2', 'pronto'],
-    ['🖨️', 'Tickets de cocina', 'Más adelante', 'pronto'],
-    ['🚪', 'Cerrar sesión', '', 'salir'],
+  type Item = [string, string, string, string, () => void, boolean?]
+  const items: Item[] = [
+    ['🍛', 'Menú del día', 'Publicar el almuerzo de hoy', 'var(--green-soft)', () => nav('/menu')],
+    ['🏷️', 'Productos', 'Precios, disponibilidad y recetas', 'var(--pink-soft)', () => nav('/productos')],
+    ['📊', 'Reportes', 'Ventas, ganancia y exportar', 'var(--lilac-soft)', () => nav('/reportes')],
+    ['🧾', 'Cierre de caja', 'Cuadre del día', 'var(--orange-soft)', () => nav('/cierre')],
+    ['🚚', 'Proveedores', 'Datos y compras', 'var(--yellow-soft)', () => nav('/proveedores')],
+    ...(staff?.role === 'admin' ? [['👩‍🍳', 'Empleados', 'Usuarios con acceso a la app', 'var(--pink-soft)', () => setVista('empleados')] as Item] : []),
+    ['🔒', 'Cambiar contraseña', staff?.full_name ?? '', 'var(--lilac-soft)', () => setVista('clave')],
+    ['🖨️', 'Tickets de cocina', 'Próximamente', 'var(--line)', () => {}, true],
+    ['🚪', 'Cerrar sesión', '', 'var(--line)', () => supabase.auth.signOut()],
   ]
 
   return (
     <div className="screen">
       <div className="top"><h1>Más</h1></div>
       <div className="box">
-        {items.map(([ic, t, s, v]) => (
-          <button
-            key={t}
-            className="row-i"
-            disabled={v === 'pronto'}
-            style={v === 'pronto' ? { opacity: 0.55 } : undefined}
-            onClick={() => (v === 'salir' ? supabase.auth.signOut() : v !== 'pronto' && setVista(v))}
-          >
-            <div className="art">{ic}</div>
-            <div className="tx"><b>{t}</b>{s && <small>{s}</small>}</div>
-            {v !== 'pronto' && <span className="muted">›</span>}
+        {items.map(([ic, t, s, c, go, pronto]) => (
+          <button key={t} className="row-i" disabled={pronto} style={pronto ? { opacity: 0.6 } : undefined} onClick={go}>
+            <div className="art" style={{ ['--c' as string]: c }}>{ic}</div>
+            <div className="tx"><b>{t}</b>{s && !pronto && <small>{s}</small>}</div>
+            {pronto ? <span className="soon">PRÓXIMAMENTE</span> : <span className="muted">›</span>}
           </button>
         ))}
       </div>
@@ -48,25 +45,14 @@ export default function Mas() {
   )
 }
 
-function Productos({ volver }: { volver: () => void }) {
+export function Productos() {
+  const nav = useNavigate()
+  const volver = () => nav('/mas')
   const { categorias, productos, recargar } = useCatalogo()
   const toast = useToast()
-  const [editando, setEditando] = useState<Producto | null>(null)
-  const [precio, setPrecio] = useState('')
-
   async function disponible(p: Producto) {
     const { error } = await supabase.from('products').update({ available_today: !p.available_today }).eq('id', p.id)
     if (error) return toast(error.message, true)
-    recargar()
-  }
-
-  async function guardarPrecio() {
-    const n = Number(precio)
-    if (!editando || !n) return
-    const { error } = await supabase.from('products').update({ price: n }).eq('id', editando.id)
-    if (error) return toast(error.message, true)
-    toast(`${editando.name}: ${pesos(n)}`)
-    setEditando(null)
     recargar()
   }
 
@@ -91,9 +77,9 @@ function Productos({ volver }: { volver: () => void }) {
             {productos.filter((p) => p.category_id === c.id).map((p) => (
               <div key={p.id} className="row-i">
                 <div className="art">{p.icon}</div>
-                <button className="tx" style={{ background: 'none', border: 0, textAlign: 'left', padding: 0 }} onClick={() => { setEditando(p); setPrecio(String(p.price)) }}>
+                <button className="tx" style={{ background: 'none', border: 0, textAlign: 'left', padding: 0 }} onClick={() => nav('/productos/' + p.id)}>
                   <b>{p.name}</b>
-                  <small>{pesos(p.price)} · {p.available_today ? 'Disponible' : 'Agotado hoy'}</small>
+                  <small>{pesos(p.price)} · {p.available_today ? 'Disponible' : 'Agotado hoy'}{p.recipes.length ? '' : ' · sin receta'}</small>
                 </button>
                 <button className={'tog' + (p.available_today ? ' on' : '')} aria-label={`Disponible hoy: ${p.name}`} aria-pressed={p.available_today} onClick={() => disponible(p)} />
               </div>
@@ -101,20 +87,6 @@ function Productos({ volver }: { volver: () => void }) {
           </div>
         </div>
       ))}
-      {editando && (
-        <>
-          <div className="dim" onClick={() => setEditando(null)} />
-          <div className="sheet" role="dialog" aria-label="Cambiar precio">
-            <div className="grab" />
-            <div className="sh-top"><div className="art">{editando.icon}</div><div><b>{editando.name}</b><small>Precio actual {pesos(editando.price)}</small></div></div>
-            <label className="field big">
-              <span>NUEVO PRECIO</span>
-              <input id="precio" inputMode="numeric" autoFocus value={precio ? pesos(Number(precio)) : ''} onChange={(e) => setPrecio(e.target.value.replace(/\D/g, ''))} />
-            </label>
-            <button className="btn" disabled={!Number(precio)} onClick={guardarPrecio}>Guardar precio</button>
-          </div>
-        </>
-      )}
     </div>
   )
 }

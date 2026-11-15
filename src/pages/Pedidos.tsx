@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth, useCarrito, useCatalogo, useToast } from '../lib/store'
 import { hace, horaCorta, iniciales, pesos } from '../lib/format'
+import { METODOS } from '../lib/config'
 import type { ItemPedido, OpcionElegida, Pedido } from '../lib/types'
 
 type Fila = Pedido & {
@@ -20,6 +21,16 @@ export default function Pedidos() {
   const [filas, setFilas] = useState<Fila[] | null>(null)
   const [anulando, setAnulando] = useState<Fila | null>(null)
   const [motivo, setMotivo] = useState('')
+  const [pagado, setPagado] = useState<number | null>(null)
+  const [devolucion, setDevolucion] = useState<string | null>(null) // null = saldo a favor
+
+  useEffect(() => {
+    if (!anulando) return
+    setPagado(null)
+    setDevolucion(anulando.customer_id ? null : 'efectivo')
+    supabase.from('payments').select('amount').eq('order_id', anulando.id).eq('kind', 'venta')
+      .then(({ data }) => setPagado((data ?? []).reduce((a, x: { amount: number }) => a + x.amount, 0)))
+  }, [anulando])
 
   const cargar = useCallback(async () => {
     let q = supabase.from('orders').select('*, customers(full_name), order_items(*)')
@@ -64,9 +75,11 @@ export default function Pedidos() {
 
   async function anular() {
     if (!anulando) return
-    const { error } = await supabase.rpc('cancel_order', { p_order_id: anulando.id, p_reason: motivo })
+    const { error } = await supabase.rpc('void_order', {
+      p_order_id: anulando.id, p_reason: motivo, p_refund_method: pagado ? devolucion : null,
+    })
     if (error) return toast(error.message, true)
-    toast(`Pedido #${anulando.number} anulado`)
+    toast(`Pedido #${anulando.number} anulado` + (pagado ? (devolucion ? ' · devolución registrada' : ' · quedó saldo a favor') : ''))
     setAnulando(null)
     setMotivo('')
     cargar()
@@ -134,9 +147,24 @@ export default function Pedidos() {
           <div className="dim" onClick={() => setAnulando(null)} />
           <div className="sheet" role="dialog" aria-label="Anular pedido">
             <div className="grab" />
-            <div className="sh-top"><div><b>Anular pedido #{anulando.number}</b><small>{pesos(anulando.total)} · queda registrado quién lo anuló y por qué. Si se cargó a una cuenta, se descuenta del saldo.</small></div></div>
+            <div className="sh-top"><div><b>Anular pedido #{anulando.number}</b><small>{pesos(anulando.total)} · queda registrado quién lo anuló y por qué. Lo que se cargó a la cuenta se descuenta del saldo y lo vendido vuelve al inventario.</small></div></div>
             <label className="field"><span>MOTIVO</span><input id="motivo" autoFocus value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ej.: se registró dos veces" /></label>
-            <button className="btn danger" disabled={!motivo.trim()} onClick={anular}>Anular pedido</button>
+            {pagado === null ? (
+              <div className="muted">Revisando pagos…</div>
+            ) : pagado > 0 && (
+              <div className="grp">
+                <div className="l">Ya se habían pagado {pesos(pagado)}. ¿Qué hacemos con ese dinero?</div>
+                <div className="chips">
+                  {anulando.customer_id && (
+                    <button className={'ch' + (devolucion === null ? ' on' : '')} onClick={() => setDevolucion(null)}>Dejar saldo a favor</button>
+                  )}
+                  {METODOS.map((m) => (
+                    <button key={m.id} className={'ch' + (devolucion === m.id ? ' on' : '')} onClick={() => setDevolucion(m.id)}>Devolví por {m.nombre}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <button className="btn danger" disabled={!motivo.trim() || pagado === null} onClick={anular}>Anular pedido</button>
           </div>
         </>
       )}

@@ -68,11 +68,12 @@ export function CatalogoProvider({ children }: { children: ReactNode }) {
   const recargar = useCallback(async () => {
     const [c, p] = await Promise.all([
       supabase.from('categories').select('*').eq('active', true).order('sort'),
-      supabase.from('products').select('*, option_groups(*, options(*))').eq('active', true).order('sort'),
+      supabase.from('products').select('*, option_groups(*, options(*)), recipes(quantity, inventory_items(id, name, stock, unit))').eq('active', true).order('sort'),
     ])
     setCategorias((c.data as Categoria[]) ?? [])
     const prods = ((p.data as Producto[]) ?? []).map((x) => ({
       ...x,
+      recipes: x.recipes ?? [],
       option_groups: [...(x.option_groups ?? [])]
         .sort((a, b) => a.sort - b.sort)
         .map((g) => ({ ...g, options: [...g.options].sort((a, b) => a.sort - b.sort) })),

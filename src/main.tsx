@@ -11,7 +11,15 @@ import Cobro from './pages/Cobro'
 import Pedidos from './pages/Pedidos'
 import Clientes from './pages/Clientes'
 import ClientePage from './pages/Cliente'
-import Mas from './pages/Mas'
+import Mas, { Productos } from './pages/Mas'
+import Inventario from './pages/Inventario'
+import Compra from './pages/Compra'
+import ProductoPage from './pages/Producto'
+import Reportes from './pages/Reportes'
+import CierrePage from './pages/Cierre'
+import Proveedores from './pages/Proveedores'
+import MenuDiaPage from './pages/MenuDia'
+import Resumenes from './pages/Resumenes'
 
 const ICONOS: Record<string, string> = {
   vender: '<path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/>',
@@ -56,15 +64,6 @@ function Nav() {
   )
 }
 
-function Proximamente({ titulo, texto }: { titulo: string; texto: string }) {
-  return (
-    <div className="screen">
-      <div className="top"><h1>{titulo}</h1></div>
-      <div className="empty"><b>Llega en la fase 2</b>{texto}</div>
-    </div>
-  )
-}
-
 function App() {
   const { session, staff, loading, recovery } = useAuth()
   if (!configured)
@@ -97,7 +96,15 @@ function App() {
             <Route path="/pedidos" element={<Pedidos />} />
             <Route path="/clientes" element={<Clientes />} />
             <Route path="/clientes/:id" element={<ClientePage />} />
-            <Route path="/inventario" element={<Proximamente titulo="Inventario" texto="Stock, recetas, compras y mermas." />} />
+            <Route path="/clientes/resumenes" element={<Resumenes />} />
+            <Route path="/inventario" element={<Inventario />} />
+            <Route path="/inventario/compra" element={<Compra />} />
+            <Route path="/productos" element={<Productos />} />
+            <Route path="/productos/:id" element={<ProductoPage />} />
+            <Route path="/reportes" element={<Reportes />} />
+            <Route path="/cierre" element={<CierrePage />} />
+            <Route path="/proveedores" element={<Proveedores />} />
+            <Route path="/menu" element={<MenuDiaPage />} />
             <Route path="/mas" element={<Mas />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
