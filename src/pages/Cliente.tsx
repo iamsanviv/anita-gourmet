@@ -1,13 +1,18 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth, useCarrito, useToast } from '../lib/store'
 import { METODOS, NEGOCIO, type Metodo } from '../lib/config'
-import { fechaCorta, horaCorta, iniciales, pesos, primerNombre, telefonoWhatsApp } from '../lib/format'
-import type { Cliente, Movimiento } from '../lib/types'
+import { fechaCorta, horaCorta, hoyBogota, iniciales, inicioDia, pesos, primerNombre, telefonoWhatsApp } from '../lib/format'
+import type { Cliente, Movimiento, OpcionElegida } from '../lib/types'
 import NuevoCliente from './NuevoCliente'
 
-type Mov = Movimiento & { orders: { number: number; order_items: { name: string; quantity: number }[] } | null }
+type LineaPedido = { name: string; quantity: number; unit_price: number; options: OpcionElegida[] | null; note: string | null }
+type Mov = Movimiento & {
+  orders: { number: number; total: number; status: 'abierto' | 'cobrado' | 'anulado'; note: string | null; created_at: string; order_items: LineaPedido[] } | null
+}
+
+const opcionesTexto = (l: LineaPedido) => (l.options ?? []).map((o) => o.name).join(', ')
 
 /** Movimientos desde la última vez que la cuenta quedó en cero (en orden cronológico). */
 export function movimientosPendientes(movs: Mov[]) {
@@ -52,7 +57,8 @@ export default function ClientePage() {
   const [cliente, setCliente] = useState<Cliente | null>(null)
   const [movs, setMovs] = useState<Mov[]>([])
   const [saldo, setSaldo] = useState(0)
-  const [hoja, setHoja] = useState<'abono' | 'whatsapp' | 'editar' | null>(null)
+  const [hoja, setHoja] = useState<'abono' | 'whatsapp' | 'editar' | 'consumo' | null>(null)
+  const [pedido, setPedido] = useState<Mov | null>(null)
   const [monto, setMonto] = useState('')
   const [metodo, setMetodo] = useState<Metodo>('efectivo')
   const [enviando, setEnviando] = useState(false)
@@ -60,7 +66,7 @@ export default function ClientePage() {
   const cargar = useCallback(async () => {
     const [{ data: c }, { data: m }, { data: b }] = await Promise.all([
       supabase.from('customers').select('*').eq('id', id!).single(),
-      supabase.from('account_entries').select('*, orders(number, order_items(name, quantity))').eq('customer_id', id!).order('created_at', { ascending: false }).limit(200),
+      supabase.from('account_entries').select('*, orders(number, total, status, note, created_at, order_items(name, quantity, unit_price, options, note))').eq('customer_id', id!).order('created_at', { ascending: false }).limit(200),
       supabase.from('customer_balances').select('balance').eq('customer_id', id!).maybeSingle(),
     ])
     setCliente(c as Cliente)
@@ -124,13 +130,18 @@ export default function ClientePage() {
         <button className="act" onClick={vender}><i>🛍️</i>Vender</button>
       </div>
 
-      <div className="lbl">Movimientos</div>
+      <div className="lbl" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span>Movimientos</span>
+        {movs.some((m) => m.orders) && <button className="mini" onClick={() => setHoja('consumo')}>Consumo por producto</button>}
+      </div>
       {movs.length === 0 ? (
         <div className="empty">Aún no hay movimientos en la cuenta.</div>
       ) : (
         <div className="box">
-          {movs.map((m) => (
-            <div key={m.id} className="row-i">
+          {movs.map((m) => {
+            const Fila = m.orders ? 'button' : 'div'
+            return (
+            <Fila key={m.id} className="row-i" {...(m.orders ? { onClick: () => setPedido(m), 'aria-label': `Ver pedido #${m.orders.number}` } : {})}>
               <div className="art" style={{ ['--c' as string]: m.amount > 0 ? 'var(--orange-soft)' : 'var(--green-soft)' }}>
                 {m.kind === 'cargo' ? '🧾' : m.kind === 'abono' ? '💵' : '↩️'}
               </div>
@@ -139,8 +150,10 @@ export default function ClientePage() {
                 <small>{fechaCorta(m.created_at)} {horaCorta(m.created_at)}{m.orders ? ' · ' + detalle(m) : ''}</small>
               </div>
               <span className={'am ' + (m.amount > 0 ? 'up' : 'down')}>{m.amount > 0 ? '+' : '−'}{pesos(Math.abs(m.amount))}</span>
-            </div>
-          ))}
+              {m.orders && <span className="muted" aria-hidden="true">›</span>}
+            </Fila>
+            )
+          })}
         </div>
       )}
 
@@ -192,9 +205,113 @@ export default function ClientePage() {
         </>
       )}
 
+      {pedido?.orders && <DetallePedido m={pedido} onClose={() => setPedido(null)} onConsumo={() => { setPedido(null); setHoja('consumo') }} />}
+      {hoja === 'consumo' && <ConsumoSheet clienteId={cliente.id} nombre={primerNombre(cliente.full_name)} pendientes={movimientosPendientes(movs)} onClose={() => setHoja(null)} />}
+
       {hoja === 'editar' && (
         <NuevoCliente cliente={cliente} onClose={() => setHoja(null)} onCreado={() => { setHoja(null); cargar() }} />
       )}
     </div>
+  )
+}
+
+/** Detalle de un pedido de la cuenta: producto por producto. */
+function DetallePedido({ m, onClose, onConsumo }: { m: Mov; onClose: () => void; onConsumo: () => void }) {
+  const o = m.orders!
+  return (
+    <>
+      <div className="dim" onClick={onClose} />
+      <div className="sheet" role="dialog" aria-label={`Pedido #${o.number}`}>
+        <div className="grab" />
+        <div className="sh-top">
+          <div className="art">🧾</div>
+          <div>
+            <b>Pedido #{o.number} {o.status === 'anulado' && <span className="tag blo">ANULADO</span>}{o.status === 'abierto' && <span className="tag oc">ABIERTO</span>}</b>
+            <small>{fechaCorta(m.created_at)} {horaCorta(m.created_at)}</small>
+          </div>
+        </div>
+        <div>
+          {o.order_items.map((l, i) => (
+            <div key={i} className="rc" style={{ borderBottom: '1px dashed var(--line)', alignItems: 'flex-start' }}>
+              <span>
+                <b>{l.quantity} × {l.name}</b>
+                {opcionesTexto(l) && <small className="muted" style={{ display: 'block' }}>{opcionesTexto(l)}</small>}
+                {l.note && <small className="muted" style={{ display: 'block' }}>Nota: {l.note}</small>}
+                {l.quantity > 1 && <small className="muted" style={{ display: 'block' }}>{pesos(l.unit_price)} c/u</small>}
+              </span>
+              <span className="v">{pesos(l.unit_price * l.quantity)}</span>
+            </div>
+          ))}
+        </div>
+        <div className="sum" style={{ margin: 0 }}><span>Total</span><span className="v" style={o.status === 'anulado' ? { textDecoration: 'line-through' } : undefined}>{pesos(o.total)}</span></div>
+        {o.note && <p className="note" style={{ margin: 0 }}>Nota del pedido: {o.note}</p>}
+        <button className="btn soft" onClick={onConsumo}>Ver todo lo consumido por producto</button>
+      </div>
+    </>
+  )
+}
+
+type Consumo = { name: string; cantidad: number; total: number; pedidos: number }
+
+/** Todo lo que el cliente ha consumido, agrupado por producto (sin pedidos anulados). */
+function ConsumoSheet({ clienteId, nombre, pendientes, onClose }: { clienteId: string; nombre: string; pendientes: Mov[]; onClose: () => void }) {
+  const [rango, setRango] = useState<'pendiente' | 'mes' | 'todo'>('pendiente')
+  const [lineas, setLineas] = useState<(LineaPedido & { order_id: string; orders: { created_at: string } })[] | null>(null)
+
+  useEffect(() => {
+    supabase.from('order_items')
+      .select('name, quantity, unit_price, options, note, order_id, orders!inner(customer_id, status, created_at)')
+      .eq('orders.customer_id', clienteId).neq('orders.status', 'anulado')
+      .then(({ data }) => setLineas((data as never) ?? []))
+  }, [clienteId])
+
+  const filas = useMemo(() => {
+    if (!lineas) return null
+    const idsPend = new Set(pendientes.filter((m) => m.kind === 'cargo' && m.order_id).map((m) => m.order_id))
+    const inicioMes = hoyBogota().slice(0, 8) + '01'
+    const elegidas = lineas.filter((l) =>
+      rango === 'todo' ? true : rango === 'pendiente' ? idsPend.has(l.order_id) : l.orders.created_at >= inicioDia(inicioMes))
+    const map = new Map<string, Consumo & { ids: Set<string> }>()
+    for (const l of elegidas) {
+      const c = map.get(l.name) ?? { name: l.name, cantidad: 0, total: 0, pedidos: 0, ids: new Set<string>() }
+      c.cantidad += l.quantity
+      c.total += l.quantity * l.unit_price
+      c.ids.add(l.order_id)
+      c.pedidos = c.ids.size
+      map.set(l.name, c)
+    }
+    return [...map.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
+  }, [lineas, rango, pendientes])
+
+  const total = (filas ?? []).reduce((a, f) => a + f.total, 0)
+  const unidades = (filas ?? []).reduce((a, f) => a + f.cantidad, 0)
+
+  return (
+    <>
+      <div className="dim" onClick={onClose} />
+      <div className="sheet" role="dialog" aria-label="Consumo por producto">
+        <div className="grab" />
+        <div className="sh-top"><div className="art">📊</div><div><b>Lo que ha consumido {nombre}</b><small>Agrupado por producto · sin pedidos anulados</small></div></div>
+        <div className="seg" style={{ margin: 0 }}>
+          <button className={rango === 'pendiente' ? 'on' : ''} onClick={() => setRango('pendiente')}>Por pagar</button>
+          <button className={rango === 'mes' ? 'on' : ''} onClick={() => setRango('mes')}>Este mes</button>
+          <button className={rango === 'todo' ? 'on' : ''} onClick={() => setRango('todo')}>Todo</button>
+        </div>
+        {!filas ? <div className="empty" style={{ margin: 0 }}>Cargando…</div> : filas.length === 0 ? (
+          <div className="empty" style={{ margin: 0 }}>{rango === 'pendiente' ? 'No tiene consumos pendientes por pagar.' : 'No hay consumos en este periodo.'}</div>
+        ) : (
+          <div>
+            {filas.map((f) => (
+              <div key={f.name} className="rc" style={{ borderBottom: '1px dashed var(--line)' }}>
+                <span><b>{f.cantidad} × {f.name}</b><small className="muted" style={{ display: 'block' }}>{f.pedidos === 1 ? '1 pedido' : `${f.pedidos} pedidos`}</small></span>
+                <span className="v">{pesos(f.total)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {filas && filas.length > 0 && <div className="sum" style={{ margin: 0 }}><span>{unidades} {unidades === 1 ? 'producto' : 'productos'}</span><span className="v">{pesos(total)}</span></div>}
+        {rango === 'pendiente' && <p className="note" style={{ margin: 0 }}>"Por pagar" son los pedidos desde la última vez que la cuenta quedó en cero.</p>}
+      </div>
+    </>
   )
 }
