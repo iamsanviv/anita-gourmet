@@ -5,6 +5,7 @@ import { useAuth, useCatalogo, useToast } from '../lib/store'
 import { pesos } from '../lib/format'
 import type { Personal, Producto } from '../lib/types'
 import { CrearClave } from './Login'
+import { ProductoSheet } from './ProductoEditar'
 
 type Vista = null | 'empleados' | 'clave'
 
@@ -50,6 +51,19 @@ export function Productos() {
   const volver = () => nav('/mas')
   const { categorias, productos, recargar } = useCatalogo()
   const toast = useToast()
+  const [nuevo, setNuevo] = useState(false)
+  const [ocultos, setOcultos] = useState<Pick<Producto, 'id' | 'name' | 'icon' | 'price'>[]>([])
+  const cargarOcultos = () =>
+    supabase.from('products').select('id, name, icon, price').eq('active', false).order('name')
+      .then(({ data }) => setOcultos((data as typeof ocultos) ?? []))
+  useEffect(() => { cargarOcultos() }, [productos])
+
+  async function mostrar(id: string, name: string) {
+    const { error } = await supabase.from('products').update({ active: true, available_today: true }).eq('id', id)
+    if (error) return toast(error.message, true)
+    toast(`${name} vuelve a aparecer en Vender`)
+    recargar()
+  }
   async function disponible(p: Producto) {
     const { error } = await supabase.from('products').update({ available_today: !p.available_today }).eq('id', p.id)
     if (error) return toast(error.message, true)
@@ -69,6 +83,7 @@ export function Productos() {
         <button className="round" onClick={volver} aria-label="Volver">‹</button>
         <h1>Productos</h1>
         <button className="mini" onClick={reactivarTodo}>Todo disponible</button>
+        <button className="mini pri" onClick={() => setNuevo(true)}>+ Nuevo</button>
       </div>
       {categorias.map((c) => (
         <div key={c.id}>
@@ -87,6 +102,21 @@ export function Productos() {
           </div>
         </div>
       ))}
+      {ocultos.length > 0 && (
+        <>
+          <div className="lbl">Ocultos (no aparecen en Vender)</div>
+          <div className="box">
+            {ocultos.map((p) => (
+              <div key={p.id} className="row-i" style={{ opacity: 0.75 }}>
+                <div className="art">{p.icon}</div>
+                <div className="tx"><b>{p.name}</b><small>{pesos(p.price)}</small></div>
+                <button className="mini" onClick={() => mostrar(p.id, p.name)}>Mostrar</button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {nuevo && <ProductoSheet onClose={() => setNuevo(false)} />}
     </div>
   )
 }

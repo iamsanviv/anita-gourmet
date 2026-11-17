@@ -328,3 +328,6 @@ button.alert { display: block; width: calc(100% - 32px); border: 0; text-align: 
   body { background: #fff; }
   .box, .kpi, .chart { break-inside: avoid; }
 }
+.inp { background: var(--surface); border: 1.5px solid var(--line); border-radius: 12px; padding: 10px; width: 100%; min-width: 0; }
+.inp:focus { border-color: var(--pink); outline: none; }
+.top .mini { white-space: nowrap; }
