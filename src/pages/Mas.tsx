@@ -52,9 +52,13 @@ export function Productos() {
   const { categorias, productos, recargar } = useCatalogo()
   const toast = useToast()
   const [nuevo, setNuevo] = useState(false)
-  const [ocultos, setOcultos] = useState<Pick<Producto, 'id' | 'name' | 'icon' | 'price'>[]>([])
+  const [ocultos, setOcultos] = useState<Pick<Producto, 'id' | 'name' | 'icon' | 'price' | 'category_id'>[]>([])
+  const [q, setQ] = useState('')
+  const [catId, setCatId] = useState<string | null>(null)
+  const [desde, setDesde] = useState('')
+  const [hasta, setHasta] = useState('')
   const cargarOcultos = () =>
-    supabase.from('products').select('id, name, icon, price').eq('active', false).order('name')
+    supabase.from('products').select('id, name, icon, price, category_id').eq('active', false).order('name')
       .then(({ data }) => setOcultos((data as typeof ocultos) ?? []))
   useEffect(() => { cargarOcultos() }, [productos])
 
@@ -64,6 +68,19 @@ export function Productos() {
     toast(`${name} vuelve a aparecer en Vender`)
     recargar()
   }
+  const sinTildes = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  const pasa = (p: { name: string; price: number; category_id: string }) => {
+    const t = sinTildes(q.trim())
+    return (!t || sinTildes(p.name).includes(t))
+      && (!catId || p.category_id === catId)
+      && (desde === '' || p.price >= Number(desde))
+      && (hasta === '' || p.price <= Number(hasta))
+  }
+  const visibles = productos.filter(pasa)
+  const ocultosVisibles = ocultos.filter(pasa)
+  const filtrando = !!(q.trim() || catId || desde || hasta)
+  const limpiar = () => { setQ(''); setCatId(null); setDesde(''); setHasta('') }
+
   async function disponible(p: Producto) {
     const { error } = await supabase.from('products').update({ available_today: !p.available_today }).eq('id', p.id)
     if (error) return toast(error.message, true)
@@ -85,11 +102,35 @@ export function Productos() {
         <button className="mini" onClick={reactivarTodo}>Todo disponible</button>
         <button className="mini pri" onClick={() => setNuevo(true)}>+ Nuevo</button>
       </div>
-      {categorias.map((c) => (
+      <label className="search">
+        <span aria-hidden="true">🔍</span>
+        <input id="buscar-productos" placeholder="Buscar producto…" value={q} onChange={(e) => setQ(e.target.value)} />
+        {q && <button className="mini link" aria-label="Borrar búsqueda" onClick={() => setQ('')}>✕</button>}
+      </label>
+      <div className="fchips" role="group" aria-label="Categoría">
+        <button className={'fchip' + (!catId ? ' on' : '')} onClick={() => setCatId(null)}>Todas</button>
+        {categorias.map((c) => (
+          <button key={c.id} className={'fchip' + (catId === c.id ? ' on' : '')} aria-pressed={catId === c.id} onClick={() => setCatId(catId === c.id ? null : c.id)}>{c.icon} {c.name}</button>
+        ))}
+      </div>
+      <div className="row2" style={{ padding: '0 16px' }}>
+        <label className="field"><span>PRECIO DESDE</span><input id="precio-desde" inputMode="numeric" value={desde ? pesos(Number(desde)) : ''} onChange={(e) => setDesde(e.target.value.replace(/\D/g, ''))} placeholder="$0" /></label>
+        <label className="field"><span>PRECIO HASTA</span><input id="precio-hasta" inputMode="numeric" value={hasta ? pesos(Number(hasta)) : ''} onChange={(e) => setHasta(e.target.value.replace(/\D/g, ''))} placeholder="Sin límite" /></label>
+      </div>
+      {filtrando && (
+        <div className="sec-t" style={{ paddingTop: 0 }}>
+          <span>{visibles.length} {visibles.length === 1 ? 'producto' : 'productos'}{ocultosVisibles.length ? ` · ${ocultosVisibles.length} oculto${ocultosVisibles.length === 1 ? '' : 's'}` : ''}</span>
+          <button className="mini link" onClick={limpiar}>Quitar filtros</button>
+        </div>
+      )}
+      {filtrando && visibles.length === 0 && ocultosVisibles.length === 0 && (
+        <div className="empty"><b>Sin resultados</b>Prueba con otro nombre, categoría o rango de precio.</div>
+      )}
+      {categorias.filter((c) => visibles.some((p) => p.category_id === c.id)).map((c) => (
         <div key={c.id}>
           <div className="lbl">{c.icon} {c.name}</div>
           <div className="box">
-            {productos.filter((p) => p.category_id === c.id).map((p) => (
+            {visibles.filter((p) => p.category_id === c.id).map((p) => (
               <div key={p.id} className="row-i">
                 <div className="art">{p.icon}</div>
                 <button className="tx" style={{ background: 'none', border: 0, textAlign: 'left', padding: 0 }} onClick={() => nav('/productos/' + p.id)}>
@@ -102,11 +143,11 @@ export function Productos() {
           </div>
         </div>
       ))}
-      {ocultos.length > 0 && (
+      {ocultosVisibles.length > 0 && (
         <>
           <div className="lbl">Ocultos (no aparecen en Vender)</div>
           <div className="box">
-            {ocultos.map((p) => (
+            {ocultosVisibles.map((p) => (
               <div key={p.id} className="row-i" style={{ opacity: 0.75 }}>
                 <div className="art">{p.icon}</div>
                 <div className="tx"><b>{p.name}</b><small>{pesos(p.price)}</small></div>
