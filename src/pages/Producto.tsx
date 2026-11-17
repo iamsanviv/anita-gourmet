@@ -3,8 +3,9 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useCatalogo, useToast } from '../lib/store'
 import { cant, leerNumero, pesos } from '../lib/format'
-import type { ItemInventario, RecetaConItem } from '../lib/types'
+import type { GrupoOpciones, ItemInventario, RecetaConItem } from '../lib/types'
 import { useInventario } from './Inventario'
+import { GrupoSheet, ProductoSheet } from './ProductoEditar'
 
 export default function ProductoPage() {
   const { id } = useParams()
@@ -17,6 +18,8 @@ export default function ProductoPage() {
   const [precio, setPrecio] = useState('')
   const [agregando, setAgregando] = useState(false)
   const [editando, setEditando] = useState<RecetaConItem | null>(null)
+  const [editandoProducto, setEditandoProducto] = useState(false)
+  const [grupo, setGrupo] = useState<GrupoOpciones | 'nuevo' | null>(null)
 
   const cargar = useCallback(async () => {
     const { data } = await supabase.from('recipes').select('*, inventory_items(*)').eq('product_id', id!)
@@ -42,6 +45,14 @@ export default function ProductoPage() {
     const { error } = await supabase.from('products').update({ available_today: !p!.available_today }).eq('id', p!.id)
     if (error) return toast(error.message, true)
     recargar()
+  }
+
+  async function ocultar() {
+    const { error } = await supabase.from('products').update({ active: false }).eq('id', p!.id)
+    if (error) return toast(error.message, true)
+    toast(`${p!.name} quedó oculto. Puedes volver a mostrarlo desde Productos.`)
+    await recargar()
+    nav('/productos')
   }
 
   async function guardarPrecio() {
@@ -74,6 +85,7 @@ export default function ProductoPage() {
       <div className="top">
         <button className="round" onClick={() => nav('/productos')} aria-label="Volver">‹</button>
         <h1>Producto</h1>
+        <button className="mini" onClick={() => setEditandoProducto(true)}>Editar</button>
       </div>
       <div className="hero-p">
         <div className="art">{p.icon}</div>
@@ -129,18 +141,30 @@ export default function ProductoPage() {
         </>
       )}
 
-      {p.option_groups.length > 0 && (
-        <>
-          <div className="lbl">Opciones y extras</div>
-          {p.option_groups.map((g) => (
-            <div key={g.id} style={{ padding: '0 16px 8px' }}>
-              <div className="muted" style={{ fontSize: 12, fontWeight: 800, marginBottom: 4 }}>{g.name}</div>
-              <div className="chips">
-                {g.options.map((o) => <span key={o.id} className="ch">{o.name} {o.price_delta !== 0 && <small>{o.price_delta > 0 ? '+' : ''}{pesos(o.price_delta)}</small>}</span>)}
-              </div>
+      <div className="lbl">Opciones y extras</div>
+      <div className="box">
+        {p.option_groups.map((g) => (
+          <button key={g.id} className="row-i" onClick={() => setGrupo(g)}>
+            <div className="tx">
+              <b>{g.name} <span className="muted" style={{ fontWeight: 700, fontSize: 11.5 }}>{g.required ? 'Obligatorio' : 'Opcional'}{g.multiple ? ' · varias' : ''}</span></b>
+              <small>{g.options.map((o) => o.name + (o.price_delta ? ` +${pesos(o.price_delta)}` : '')).join(', ')}</small>
             </div>
-          ))}
-        </>
+            <span className="muted">›</span>
+          </button>
+        ))}
+        <button className="row-i" onClick={() => setGrupo('nuevo')}>
+          <div className="art" style={{ ['--c' as string]: 'var(--line)' }}>＋</div>
+          <div className="tx"><b style={{ color: 'var(--pink)' }}>Agregar opciones</b><small>Tamaño, sabor, extras…</small></div>
+        </button>
+      </div>
+
+      <div style={{ margin: '16px 16px 0' }}>
+        <button className="btn danger" style={{ width: '100%' }} onClick={ocultar}>Ocultar producto (ya no se vende)</button>
+      </div>
+
+      {editandoProducto && <ProductoSheet producto={p} onClose={() => setEditandoProducto(false)} />}
+      {grupo && (
+        <GrupoSheet productoId={p.id} grupo={grupo === 'nuevo' ? undefined : grupo} sort={p.option_groups.length} onClose={() => setGrupo(null)} />
       )}
 
       {agregando && items && (
