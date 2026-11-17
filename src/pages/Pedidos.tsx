@@ -14,7 +14,9 @@ type Fila = Pedido & {
 export default function Pedidos() {
   const { staff } = useAuth()
   const carrito = useCarrito()
-  const { productos } = useCatalogo()
+  const { productos, categorias } = useCatalogo()
+  const [q, setQ] = useState('')
+  const [catId, setCatId] = useState<string | null>(null)
   const toast = useToast()
   const nav = useNavigate()
   const [tab, setTab] = useState<'abiertos' | 'hoy'>('abiertos')
@@ -85,21 +87,44 @@ export default function Pedidos() {
     cargar()
   }
 
-  const total = (filas ?? []).filter((f) => f.status !== 'anulado').reduce((a, f) => a + f.total, 0)
+  const sinTildes = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  const catDe = (productId: string | null) => productos.find((p) => p.id === productId)?.category_id
+  const visibles = (filas ?? []).filter((f) => {
+    const t = sinTildes(q.trim().replace(/^#/, ''))
+    const texto = sinTildes([f.number, f.customers?.full_name ?? f.guest_name ?? '', ...f.order_items.map((i) => i.name)].join(' '))
+    return (!t || texto.includes(t)) && (!catId || f.order_items.some((i) => catDe(i.product_id) === catId))
+  })
+  const total = visibles.filter((f) => f.status !== 'anulado').reduce((a, f) => a + f.total, 0)
 
   return (
     <div className="screen">
       <div className="top">
         <h1>Pedidos</h1>
-        {filas && <span className="muted" style={{ fontWeight: 800, fontSize: 13 }}>{filas.length} · {pesos(total)}</span>}
+        {filas && <span className="muted" style={{ fontWeight: 800, fontSize: 13 }}>{visibles.length} · {pesos(total)}</span>}
       </div>
       <div className="seg" role="tablist" style={{ marginBottom: 12 }}>
         <button className={tab === 'abiertos' ? 'on' : ''} onClick={() => setTab('abiertos')}>Abiertos</button>
         <button className={tab === 'hoy' ? 'on' : ''} onClick={() => setTab('hoy')}>Cerrados hoy</button>
       </div>
+      <label className="search" style={{ marginTop: 0 }}>
+        <span aria-hidden="true">🔍</span>
+        <input id="buscar-pedidos" placeholder="Número, cliente o producto…" value={q} onChange={(e) => setQ(e.target.value)} />
+        {q && <button className="mini link" aria-label="Borrar búsqueda" onClick={() => setQ('')}>✕</button>}
+      </label>
+      <div className="fchips" role="group" aria-label="Categoría" style={{ paddingTop: 6 }}>
+        <button className={'fchip' + (!catId ? ' on' : '')} onClick={() => setCatId(null)}>Todas</button>
+        {categorias.map((c) => (
+          <button key={c.id} className={'fchip' + (catId === c.id ? ' on' : '')} aria-pressed={catId === c.id} onClick={() => setCatId(catId === c.id ? null : c.id)}>{c.icon} {c.name}</button>
+        ))}
+      </div>
 
       {!filas ? (
         <div className="empty">Cargando…</div>
+      ) : filas.length > 0 && visibles.length === 0 ? (
+        <div className="empty">
+          <b>Sin resultados</b>Ningún pedido coincide con la búsqueda o la categoría.
+          <div><button className="mini link" style={{ marginTop: 8 }} onClick={() => { setQ(''); setCatId(null) }}>Quitar filtros</button></div>
+        </div>
       ) : filas.length === 0 ? (
         <div className="empty">
           <b>{tab === 'abiertos' ? 'No hay pedidos abiertos' : 'Aún no hay ventas cerradas hoy'}</b>
@@ -107,7 +132,7 @@ export default function Pedidos() {
         </div>
       ) : (
         <div className="orders">
-          {filas.map((f) => {
+          {visibles.map((f) => {
             const nombre = f.customers?.full_name ?? f.guest_name ?? ''
             const tarde = f.status === 'abierto' && Date.now() - new Date(f.created_at).getTime() > 30 * 60000
             return (
