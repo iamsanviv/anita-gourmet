@@ -20,6 +20,7 @@ import CierrePage from './pages/Cierre'
 import Proveedores from './pages/Proveedores'
 import MenuDiaPage from './pages/MenuDia'
 import Resumenes from './pages/Resumenes'
+import { Actualizador } from './lib/actualizar'
 
 const ICONOS: Record<string, string> = {
   vender: '<path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/>',
@@ -109,6 +110,7 @@ function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
           <Nav />
+          <Actualizador />
         </div>
       </CarritoProvider>
     </CatalogoProvider>
