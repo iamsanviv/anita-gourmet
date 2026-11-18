@@ -3,6 +3,10 @@ import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/store'
 import type { Cliente } from '../lib/types'
 
+/** Nombre sin tildes, mayúsculas ni espacios de más, para comparar. */
+export const normalizarNombre = (s: string) =>
+  s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim()
+
 /** Hoja para crear o editar la cuenta de un cliente. */
 export default function NuevoCliente({
   nombreInicial = '',
@@ -23,12 +27,21 @@ export default function NuevoCliente({
     email: cliente?.email ?? '',
   })
   const [guardando, setGuardando] = useState(false)
-  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value })
+  const [parecidos, setParecidos] = useState<Cliente[] | null>(null)
+  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => { setF({ ...f, [k]: e.target.value }); if (k === 'full_name' || k === 'cedula') setParecidos(null) }
 
   async function guardar(e: FormEvent) {
     e.preventDefault()
     if (!f.full_name.trim()) return toast('Escribe el nombre', true)
     setGuardando(true)
+    if (!cliente && !parecidos) {
+      // ¿Ya hay una cuenta con ese nombre (o esa cédula)?
+      const ced = f.cedula.replace(/\D/g, '')
+      const { data } = await supabase.from('customers').select('*')
+      const n = normalizarNombre(f.full_name)
+      const iguales = ((data as Cliente[]) ?? []).filter((c) => normalizarNombre(c.full_name) === n || (ced && c.cedula === ced))
+      if (iguales.length) { setGuardando(false); setParecidos(iguales); return }
+    }
     const datos = {
       full_name: f.full_name.trim(),
       cedula: f.cedula.replace(/\D/g, '') || null,
@@ -57,7 +70,21 @@ export default function NuevoCliente({
         <label className="field"><span>CÉDULA</span><input id="c-cedula" inputMode="numeric" value={f.cedula} onChange={set('cedula')} /></label>
         <label className="field"><span>CELULAR (WHATSAPP)</span><input id="c-cel" inputMode="tel" value={f.phone} onChange={set('phone')} /></label>
         <label className="field"><span>CORREO</span><input id="c-correo" type="email" value={f.email} onChange={set('email')} /></label>
-        <button className="btn" disabled={guardando}>{cliente ? 'Guardar cambios' : 'Crear cuenta'}</button>
+        {parecidos ? (
+          <>
+            <div className="alert info" style={{ margin: 0 }}>
+              Ya {parecidos.length === 1 ? 'existe una cuenta' : 'existen cuentas'} con ese nombre. Usa la que ya existe para que todo quede en un solo saldo.
+            </div>
+            {parecidos.map((c) => (
+              <button key={c.id} type="button" className="btn" onClick={() => { toast(`Usando la cuenta de ${c.full_name}`); onCreado(c) }}>
+                Usar la cuenta de {c.full_name}{c.cedula ? ` · C.C. ${c.cedula}` : c.phone ? ` · ${c.phone}` : ''}
+              </button>
+            ))}
+            <button className="btn soft" disabled={guardando}>Es otra persona: crear cuenta nueva</button>
+          </>
+        ) : (
+          <button className="btn" disabled={guardando}>{cliente ? 'Guardar cambios' : 'Crear cuenta'}</button>
+        )}
       </form>
     </>
   )
