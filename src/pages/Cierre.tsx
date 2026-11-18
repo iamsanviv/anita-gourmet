@@ -2,10 +2,67 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth, useToast } from '../lib/store'
-import { METODOS } from '../lib/config'
-import { diaCorto, hoyBogota, horaCorta, pesos } from '../lib/format'
+import { METODOS, nombreMetodo } from '../lib/config'
+import { diaCorto, hoyBogota, horaCorta, inicioDia, pesos, sumarDias } from '../lib/format'
 import type { Cierre, Reporte } from '../lib/types'
 import { traerReporte } from './Reportes'
+
+/** Movimientos de cuenta de un cliente en el día: lo que fió o lo que abonó. */
+type PorCliente = { id: string; nombre: string; total: number; detalle: string[] }
+
+function agrupar(filas: { customer_id: string; nombre: string; monto: number; detalle: string }[]): PorCliente[] {
+  const m = new Map<string, PorCliente>()
+  for (const f of filas) {
+    const c = m.get(f.customer_id) ?? { id: f.customer_id, nombre: f.nombre, total: 0, detalle: [] }
+    c.total += f.monto
+    c.detalle.push(f.detalle)
+    m.set(f.customer_id, c)
+  }
+  return [...m.values()].sort((a, b) => b.total - a.total)
+}
+
+/** Quién quedó debiendo (fiado) y quién abonó en el día. Usa los mismos criterios que el reporte. */
+async function traerCuentasDelDia(dia: string) {
+  const desde = inicioDia(dia)
+  const hasta = inicioDia(sumarDias(dia, 1))
+  const [cargos, abonos] = await Promise.all([
+    supabase.from('account_entries')
+      .select('customer_id, amount, customers(full_name), orders!inner(number, status, closed_at)')
+      .eq('kind', 'cargo').eq('orders.status', 'cobrado').gte('orders.closed_at', desde).lt('orders.closed_at', hasta),
+    supabase.from('payments')
+      .select('customer_id, amount, method, customers(full_name)')
+      .eq('kind', 'abono').gte('created_at', desde).lt('created_at', hasta),
+  ])
+  if (cargos.error) throw cargos.error
+  if (abonos.error) throw abonos.error
+  type Fila = { customer_id: string; amount: number; method?: string; customers: { full_name: string } | null; orders?: { number: number } | null }
+  const nombre = (f: Fila) => f.customers?.full_name ?? 'Cliente'
+  return {
+    fiados: agrupar((cargos.data as unknown as Fila[]).map((f) => ({ customer_id: f.customer_id, nombre: nombre(f), monto: f.amount, detalle: `#${f.orders?.number}` }))),
+    abonos: agrupar((abonos.data as unknown as Fila[]).map((f) => ({ customer_id: f.customer_id, nombre: nombre(f), monto: f.amount, detalle: nombreMetodo(f.method ?? '') }))),
+  }
+}
+
+function ListaCuentas({ titulo, filas, total, signo, vacio }: { titulo: string; filas: PorCliente[]; total: number; signo: string; vacio: string }) {
+  const nav = useNavigate()
+  return (
+    <>
+      <div className="lbl">{titulo}</div>
+      <div className="box">
+        {filas.length === 0 && <div className="rc"><span className="muted">{vacio}</span></div>}
+        {filas.map((c) => (
+          <button key={c.id} className="rc link" onClick={() => nav('/clientes/' + c.id)}>
+            <span>{c.nombre} <small className="muted">· {c.detalle.join(', ')}</small></span>
+            <span className="v">{signo}{pesos(c.total)} ›</span>
+          </button>
+        ))}
+        {filas.length > 0 && (
+          <div className="rc tot"><span>{filas.length} {filas.length === 1 ? 'cliente' : 'clientes'}</span><span className="v">{signo}{pesos(total)}</span></div>
+        )}
+      </div>
+    </>
+  )
+}
 
 export default function CierrePage() {
   const nav = useNavigate()
@@ -13,6 +70,7 @@ export default function CierrePage() {
   const { staff } = useAuth()
   const [dia, setDia] = useState(hoyBogota())
   const [r, setR] = useState<Reporte | null>(null)
+  const [cuentas, setCuentas] = useState<{ fiados: PorCliente[]; abonos: PorCliente[] } | null>(null)
   const [cierre, setCierre] = useState<(Cierre & { staff: { full_name: string } | null }) | null>(null)
   const [contado, setContado] = useState('')
   const [nota, setNota] = useState('')
@@ -21,11 +79,13 @@ export default function CierrePage() {
 
   const cargar = useCallback(async () => {
     setR(null)
-    const [rep, { data }] = await Promise.all([
+    const [rep, cts, { data }] = await Promise.all([
       traerReporte(dia, dia),
+      traerCuentasDelDia(dia),
       supabase.from('cash_closings').select('*, staff(full_name)').eq('day', dia).maybeSingle(),
     ])
     setR(rep)
+    setCuentas(cts)
     setCierre(data as typeof cierre)
     setContado(data ? String(data.counted_cash) : '')
     setNota(data?.note ?? '')
@@ -48,7 +108,9 @@ export default function CierrePage() {
     setEnviando(true)
     const datos = {
       day: dia, expected_cash: esperado, counted_cash: contadoNum, difference: diferencia, note: nota.trim() || null,
-      totals: { por_medio: r!.por_medio, devoluciones: r!.devol_por_medio, compras: r!.compras_por_medio, vendido: r!.vendido, a_cuentas: r!.a_cuentas, abiertos: r!.abiertos },
+      totals: { por_medio: r!.por_medio, devoluciones: r!.devol_por_medio, compras: r!.compras_por_medio, vendido: r!.vendido, a_cuentas: r!.a_cuentas, abiertos: r!.abiertos,
+        fiados: cuentas?.fiados.map((c) => ({ cliente: c.nombre, monto: c.total })) ?? [],
+        abonos: cuentas?.abonos.map((c) => ({ cliente: c.nombre, monto: c.total })) ?? [] },
     }
     const { error } = cierre
       ? await supabase.from('cash_closings').update(datos).eq('id', cierre.id)
@@ -78,7 +140,20 @@ export default function CierrePage() {
         {METODOS.map((m) => <div key={m.id} className="rc"><span>{m.icono} {m.nombre}</span><span className="v">{pesos(r.por_medio[m.id] ?? 0)}</span></div>)}
         <div className="rc tot"><span>Total cobrado</span><span className="v">{pesos(r.cobrado)}</span></div>
       </div>
-      {r.abonos > 0 && <p className="note">Incluye {pesos(r.abonos)} de abonos a cuentas. Además quedaron {pesos(r.a_cuentas)} cargados a cuentas.</p>}
+      {r.abonos > 0 && <p className="note">Incluye {pesos(r.abonos)} de abonos a cuentas.</p>}
+
+      {cuentas && (
+        <>
+          <ListaCuentas titulo="Fiado del día (quedó debiendo)" filas={cuentas.fiados} total={r.a_cuentas} signo="+" vacio="Nadie fió este día" />
+          <ListaCuentas titulo="Abonos del día (pagó deuda)" filas={cuentas.abonos} total={r.abonos} signo="−" vacio="No hubo abonos este día" />
+          {(r.a_cuentas > 0 || r.abonos > 0) && (
+            <div className={'diff' + (r.a_cuentas - r.abonos <= 0 ? ' ok' : '')}>
+              <span>{r.a_cuentas - r.abonos > 0 ? 'La deuda de los clientes subió' : r.a_cuentas - r.abonos < 0 ? 'La deuda de los clientes bajó' : 'La deuda quedó igual'}</span>
+              <b>{r.a_cuentas - r.abonos > 0 ? '+' : r.a_cuentas - r.abonos < 0 ? '−' : ''}{pesos(Math.abs(r.a_cuentas - r.abonos))}</b>
+            </div>
+          )}
+        </>
+      )}
 
       <div className="lbl">Efectivo en caja</div>
       <div className="box">
