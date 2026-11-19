@@ -4,5 +4,7 @@
   "assets": {
     "directory": "./dist",
     "not_found_handling": "single-page-application"
-  }
+  },
+  // Necesario para que Workers Builds cree la vista previa de cada PR (npx wrangler preview)
+  "previews": {}
 }

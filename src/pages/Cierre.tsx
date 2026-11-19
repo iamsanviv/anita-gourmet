@@ -3,9 +3,28 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth, useToast } from '../lib/store'
 import { METODOS } from '../lib/config'
-import { diaCorto, hoyBogota, horaCorta, pesos } from '../lib/format'
+import { diaCorto, hoyBogota, horaCorta, inicioDia, pesos, sumarDias } from '../lib/format'
 import type { Cierre, Reporte } from '../lib/types'
 import { traerReporte } from './Reportes'
+
+type Fiado = { id: string; nombre: string; pedidos: number; total: number }
+
+/** Lo que quedó cargado a cuentas (fiado) en las ventas cobradas del día, por cliente. */
+async function traerFiados(dia: string): Promise<Fiado[]> {
+  const { data, error } = await supabase.from('account_entries')
+    .select('customer_id, amount, customers(full_name), orders!inner(status, closed_at)')
+    .eq('kind', 'cargo').eq('orders.status', 'cobrado')
+    .gte('orders.closed_at', inicioDia(dia)).lt('orders.closed_at', inicioDia(sumarDias(dia, 1)))
+  if (error) throw error
+  const porCliente = new Map<string, Fiado>()
+  for (const e of (data ?? []) as unknown as { customer_id: string; amount: number; customers: { full_name: string } | null }[]) {
+    const f = porCliente.get(e.customer_id) ?? { id: e.customer_id, nombre: e.customers?.full_name ?? 'Cliente', pedidos: 0, total: 0 }
+    f.pedidos += 1
+    f.total += e.amount
+    porCliente.set(e.customer_id, f)
+  }
+  return [...porCliente.values()].sort((a, b) => b.total - a.total)
+}
 
 export default function CierrePage() {
   const nav = useNavigate()
@@ -13,6 +32,7 @@ export default function CierrePage() {
   const { staff } = useAuth()
   const [dia, setDia] = useState(hoyBogota())
   const [r, setR] = useState<Reporte | null>(null)
+  const [fiados, setFiados] = useState<Fiado[]>([])
   const [cierre, setCierre] = useState<(Cierre & { staff: { full_name: string } | null }) | null>(null)
   const [contado, setContado] = useState('')
   const [nota, setNota] = useState('')
@@ -21,11 +41,13 @@ export default function CierrePage() {
 
   const cargar = useCallback(async () => {
     setR(null)
-    const [rep, { data }] = await Promise.all([
+    const [rep, fia, { data }] = await Promise.all([
       traerReporte(dia, dia),
+      traerFiados(dia),
       supabase.from('cash_closings').select('*, staff(full_name)').eq('day', dia).maybeSingle(),
     ])
     setR(rep)
+    setFiados(fia)
     setCierre(data as typeof cierre)
     setContado(data ? String(data.counted_cash) : '')
     setNota(data?.note ?? '')
@@ -48,7 +70,7 @@ export default function CierrePage() {
     setEnviando(true)
     const datos = {
       day: dia, expected_cash: esperado, counted_cash: contadoNum, difference: diferencia, note: nota.trim() || null,
-      totals: { por_medio: r!.por_medio, devoluciones: r!.devol_por_medio, compras: r!.compras_por_medio, vendido: r!.vendido, a_cuentas: r!.a_cuentas, abiertos: r!.abiertos },
+      totals: { por_medio: r!.por_medio, devoluciones: r!.devol_por_medio, compras: r!.compras_por_medio, vendido: r!.vendido, a_cuentas: r!.a_cuentas, fiados: fiados.map((f) => ({ cliente: f.nombre, pedidos: f.pedidos, total: f.total })), abiertos: r!.abiertos },
     }
     const { error } = cierre
       ? await supabase.from('cash_closings').update(datos).eq('id', cierre.id)
@@ -78,7 +100,19 @@ export default function CierrePage() {
         {METODOS.map((m) => <div key={m.id} className="rc"><span>{m.icono} {m.nombre}</span><span className="v">{pesos(r.por_medio[m.id] ?? 0)}</span></div>)}
         <div className="rc tot"><span>Total cobrado</span><span className="v">{pesos(r.cobrado)}</span></div>
       </div>
-      {r.abonos > 0 && <p className="note">Incluye {pesos(r.abonos)} de abonos a cuentas. Además quedaron {pesos(r.a_cuentas)} cargados a cuentas.</p>}
+      {r.abonos > 0 && <p className="note">Incluye {pesos(r.abonos)} de abonos a cuentas.</p>}
+
+      <div className="lbl">Quedó fiado (a cuentas)</div>
+      <div className="box">
+        {fiados.length === 0 ? (
+          <div className="rc"><span>Nadie fió este día</span><span className="v">{pesos(0)}</span></div>
+        ) : fiados.map((f) => (
+          <button key={f.id} className="rc link" onClick={() => nav('/clientes/' + f.id)}>
+            <span>{f.nombre}{f.pedidos > 1 && <small> · {f.pedidos} pedidos</small>}</span><span className="v">{pesos(f.total)} ›</span>
+          </button>
+        ))}
+        <div className="rc tot"><span>Total fiado{fiados.length > 0 && ` · ${fiados.length} ${fiados.length === 1 ? 'cliente' : 'clientes'}`}</span><span className="v">{pesos(fiados.reduce((t, f) => t + f.total, 0))}</span></div>
+      </div>
 
       <div className="lbl">Efectivo en caja</div>
       <div className="box">
