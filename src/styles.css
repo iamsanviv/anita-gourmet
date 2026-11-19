@@ -331,3 +331,5 @@ button.alert { display: block; width: calc(100% - 32px); border: 0; text-align: 
 .inp { background: var(--surface); border: 1.5px solid var(--line); border-radius: 12px; padding: 10px; width: 100%; min-width: 0; }
 .inp:focus { border-color: var(--pink); outline: none; }
 .top .mini { white-space: nowrap; }
+.update-bar { position: fixed; top: calc(8px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); z-index: 60; border: 0; border-radius: 999px; padding: 10px 16px; background: var(--pink); color: var(--on-pink); font-weight: 700; font-size: 13.5px; box-shadow: 0 6px 20px rgba(0,0,0,.18); white-space: nowrap; max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis; }
+@media print { .update-bar { display: none; } }
