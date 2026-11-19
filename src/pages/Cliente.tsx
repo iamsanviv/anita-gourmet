@@ -5,7 +5,7 @@ import { useAuth, useCarrito, useToast } from '../lib/store'
 import { METODOS, NEGOCIO, type Metodo } from '../lib/config'
 import { fechaCorta, horaCorta, hoyBogota, iniciales, inicioDia, pesos, primerNombre, telefonoWhatsApp } from '../lib/format'
 import type { Cliente, Movimiento, OpcionElegida } from '../lib/types'
-import NuevoCliente from './NuevoCliente'
+import NuevoCliente, { normalizarNombre } from './NuevoCliente'
 
 type LineaPedido = { name: string; quantity: number; unit_price: number; options: OpcionElegida[] | null; note: string | null }
 type Mov = Movimiento & {
@@ -57,7 +57,7 @@ export default function ClientePage() {
   const [cliente, setCliente] = useState<Cliente | null>(null)
   const [movs, setMovs] = useState<Mov[]>([])
   const [saldo, setSaldo] = useState(0)
-  const [hoja, setHoja] = useState<'abono' | 'whatsapp' | 'editar' | 'consumo' | null>(null)
+  const [hoja, setHoja] = useState<'abono' | 'whatsapp' | 'editar' | 'consumo' | 'unir' | null>(null)
   const [pedido, setPedido] = useState<Mov | null>(null)
   const [monto, setMonto] = useState('')
   const [metodo, setMetodo] = useState<Metodo>('efectivo')
@@ -159,6 +159,7 @@ export default function ClientePage() {
 
       {staff?.role === 'admin' && (
         <div style={{ padding: '16px' }}>
+          <button className="btn ghost" style={{ width: '100%', marginBottom: 10 }} onClick={() => setHoja('unir')}>Unir con otra cuenta (cliente repetido)</button>
           <button className="btn ghost" style={{ width: '100%' }} onClick={bloquear}>
             {cliente.blocked ? 'Desbloquear cuenta' : 'Bloquear cuenta (solo pago de contado)'}
           </button>
@@ -207,6 +208,8 @@ export default function ClientePage() {
 
       {pedido?.orders && <DetallePedido m={pedido} onClose={() => setPedido(null)} onConsumo={() => { setPedido(null); setHoja('consumo') }} />}
       {hoja === 'consumo' && <ConsumoSheet clienteId={cliente.id} nombre={primerNombre(cliente.full_name)} pendientes={movimientosPendientes(movs)} onClose={() => setHoja(null)} />}
+
+      {hoja === 'unir' && <UnirSheet cliente={cliente} onClose={() => setHoja(null)} onUnido={() => { setHoja(null); cargar() }} />}
 
       {hoja === 'editar' && (
         <NuevoCliente cliente={cliente} onClose={() => setHoja(null)} onCreado={() => { setHoja(null); cargar() }} />
@@ -311,6 +314,84 @@ function ConsumoSheet({ clienteId, nombre, pendientes, onClose }: { clienteId: s
         )}
         {filas && filas.length > 0 && <div className="sum" style={{ margin: 0 }}><span>{unidades} {unidades === 1 ? 'producto' : 'productos'}</span><span className="v">{pesos(total)}</span></div>}
         {rango === 'pendiente' && <p className="note" style={{ margin: 0 }}>"Por pagar" son los pedidos desde la última vez que la cuenta quedó en cero.</p>}
+      </div>
+    </>
+  )
+}
+
+/** Pasa todo lo de otra cuenta (pedidos, abonos, saldo) a esta y borra la otra. Solo administradora. */
+function UnirSheet({ cliente, onClose, onUnido }: { cliente: Cliente; onClose: () => void; onUnido: () => void }) {
+  const toast = useToast()
+  const [otros, setOtros] = useState<(Cliente & { balance: number })[] | null>(null)
+  const [q, setQ] = useState('')
+  const [elegido, setElegido] = useState<(Cliente & { balance: number }) | null>(null)
+  const [enviando, setEnviando] = useState(false)
+
+  useEffect(() => {
+    Promise.all([
+      supabase.from('customers').select('*').neq('id', cliente.id).order('full_name'),
+      supabase.from('customer_balances').select('customer_id, balance'),
+    ]).then(([{ data: c }, { data: b }]) => {
+      const saldo = new Map(((b ?? []) as { customer_id: string; balance: number }[]).map((x) => [x.customer_id, x.balance]))
+      setOtros(((c as Cliente[]) ?? []).map((x) => ({ ...x, balance: saldo.get(x.id) ?? 0 })))
+    })
+  }, [cliente.id])
+
+  const mismo = normalizarNombre(cliente.full_name)
+  const lista = useMemo(() => {
+    const t = normalizarNombre(q)
+    return (otros ?? [])
+      .filter((o) => (t ? normalizarNombre(o.full_name).includes(t) || (o.cedula ?? '').includes(t) : normalizarNombre(o.full_name) === mismo))
+  }, [otros, q, mismo])
+
+  async function unir() {
+    if (!elegido) return
+    setEnviando(true)
+    const { error } = await supabase.rpc('merge_customers', { p_keep: cliente.id, p_remove: elegido.id })
+    setEnviando(false)
+    if (error) return toast(error.code === 'PGRST202' ? 'Falta activar esta función en la base de datos' : error.message, true)
+    toast(`Listo: lo de la otra cuenta quedó en la de ${cliente.full_name}`)
+    onUnido()
+  }
+
+  return (
+    <>
+      <div className="dim" onClick={onClose} />
+      <div className="sheet" role="dialog" aria-label="Unir cuentas">
+        <div className="grab" />
+        <div className="sh-top"><div className="art">🔗</div><div><b>Unir con otra cuenta</b><small>Todo pasa a esta cuenta y la otra se borra</small></div></div>
+        {!elegido ? (
+          <>
+            <label className="search" style={{ margin: 0 }}>
+              <span aria-hidden="true">🔍</span>
+              <input id="unir-buscar" placeholder="Buscar otro cliente…" value={q} onChange={(e) => setQ(e.target.value)} />
+            </label>
+            {!otros ? <div className="empty" style={{ margin: 0 }}>Cargando…</div> : (
+              <div>
+                {!q && lista.length > 0 && <small className="muted">Con el mismo nombre:</small>}
+                {lista.map((o) => (
+                  <button key={o.id} className="row-i" onClick={() => setElegido(o)}>
+                    <div className="tx">
+                      <b>{o.full_name}</b>
+                      <small>{[o.cedula && 'C.C. ' + o.cedula, o.phone].filter(Boolean).join(' · ') || 'Sin cédula ni celular'}</small>
+                    </div>
+                    <span className="muted">{pesos(o.balance)}</span>
+                  </button>
+                ))}
+                {lista.length === 0 && <div className="empty" style={{ margin: 0 }}>{q ? 'No hay coincidencias.' : 'No hay otra cuenta con el mismo nombre. Busca por nombre o cédula.'}</div>}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="alert info" style={{ margin: 0 }}>
+              Los pedidos, abonos y el saldo de <b>{elegido.full_name}</b>{elegido.cedula ? ` (C.C. ${elegido.cedula})` : ''} pasan a esta cuenta
+              {elegido.balance !== 0 ? ` (${elegido.balance > 0 ? 'debe' : 'a favor'} ${pesos(Math.abs(elegido.balance))})` : ''}. Si a esta cuenta le falta la cédula o el celular, se toman de la otra. Esto no se puede deshacer.
+            </div>
+            <button className="btn" disabled={enviando} onClick={unir}>Unir cuentas</button>
+            <button className="btn soft" onClick={() => setElegido(null)}>Elegir otra</button>
+          </>
+        )}
       </div>
     </>
   )
